@@ -11,6 +11,7 @@ use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use crate::logging::Scrubbed;
 
 pub const ARGON2_M_COST: u32 = 19456;
 pub const ARGON2_T_COST: u32 = 2;
@@ -170,17 +171,10 @@ fn decrypt_block(
     Ok(decrypted.to_vec())
 }
 
+#[derive(Debug)]
 pub struct VaultHandle {
-    vault_key: zeroize::Zeroizing<[u8; 32]>,
+    vault_key: zeroize::Zeroizing<Scrubbed<[u8; 32]>>,
     store: VaultStore,
-}
-
-impl fmt::Debug for VaultHandle {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("VaultHandle")
-            .field("vault_key", &"<redacted>")
-            .finish()
-    }
 }
 
 impl VaultHandle {
@@ -197,7 +191,7 @@ impl VaultHandle {
         let id_bytes = id.into_bytes();
         let decrypted_bytes = self
             .store
-            .read_credential(&self.vault_key, &id_bytes[..])
+            .read_credential(&self.vault_key.0, &id_bytes[..])
             .await?;
 
         let value = serde_json::from_slice(&decrypted_bytes)
@@ -222,7 +216,7 @@ impl VaultHandle {
             serde_json::to_vec(value).map_err(|e| VaultError::Other(e.to_string()))?;
 
         self.store
-            .insert_credential(&self.vault_key, &id_bytes[..], &plaintext)
+            .insert_credential(&self.vault_key.0, &id_bytes[..], &plaintext)
             .await?;
 
         // Zeroize temporary plaintext serialization buffer in memory
@@ -233,6 +227,7 @@ impl VaultHandle {
     }
 }
 
+#[derive(Debug)]
 pub struct VaultStore {
     pub pool: SqlitePool,
 }
@@ -359,12 +354,10 @@ impl VaultStore {
         Ok(vault_key)
     }
 
-    /// Unlocks the vault with the PIN and retrieves the master vault key.
-    /// Consumes the VaultStore and returns a VaultHandle wrapping the unlocked key.
     pub async fn unlock(self, pin: &[u8]) -> Result<VaultHandle, VaultError> {
         let vault_key = self.unlock_key(pin).await?;
         Ok(VaultHandle {
-            vault_key: zeroize::Zeroizing::new(vault_key),
+            vault_key: zeroize::Zeroizing::new(Scrubbed(vault_key)),
             store: self,
         })
     }
@@ -563,7 +556,7 @@ mod tests {
 
         // Unlock vault
         let unlocked_key = store.unlock(pin).await.unwrap();
-        assert_eq!(vault_key, *unlocked_key.vault_key);
+        assert_eq!(vault_key, unlocked_key.vault_key.0);
     }
 
     #[tokio::test]

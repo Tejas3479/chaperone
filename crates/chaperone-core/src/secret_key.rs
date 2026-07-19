@@ -1,9 +1,5 @@
 use std::fmt;
-
-#[derive(Clone, Copy)]
-pub struct SecretKey {
-    bytes: [u8; 16],
-}
+use crate::logging::Scrubbed;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SecretKeyError {
@@ -22,12 +18,9 @@ impl fmt::Display for SecretKeyError {
 
 impl std::error::Error for SecretKeyError {}
 
-impl fmt::Debug for SecretKey {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SecretKey")
-            .field("bytes", &"<redacted>")
-            .finish()
-    }
+#[derive(Clone, Copy, Debug)]
+pub struct SecretKey {
+    bytes: Scrubbed<[u8; 16]>,
 }
 
 impl fmt::Display for SecretKey {
@@ -47,12 +40,12 @@ impl SecretKey {
     pub fn generate_with_rng<R: rand::RngCore>(rng: &mut R) -> Self {
         let mut bytes = [0u8; 16];
         rng.fill_bytes(&mut bytes);
-        Self { bytes }
+        Self { bytes: Scrubbed(bytes) }
     }
 
     /// Renders the SecretKey as a Base32 string grouped in blocks of 4 characters separated by hyphens.
     pub fn to_base32(&self) -> String {
-        let unpadded = data_encoding::BASE32_NOPAD.encode(&self.bytes);
+        let unpadded = data_encoding::BASE32_NOPAD.encode(&self.bytes.0);
         let mut formatted = String::new();
         for (i, ch) in unpadded.chars().enumerate() {
             if i > 0 && i % 4 == 0 {
@@ -65,7 +58,7 @@ impl SecretKey {
 
     /// Renders the SecretKey as raw bytes (e.g. for QR encoding).
     pub fn to_bytes(&self) -> [u8; 16] {
-        self.bytes
+        self.bytes.0
     }
 
     /// Parses a SecretKey from its Base32 string representation.
@@ -90,14 +83,14 @@ impl SecretKey {
 
         let mut bytes = [0u8; 16];
         bytes.copy_from_slice(&decoded_vec);
-        Ok(Self { bytes })
+        Ok(Self { bytes: Scrubbed(bytes) })
     }
 
     /// Computes the verifier hash of the SecretKey (SHA-256).
     pub fn verifier_hash(&self) -> [u8; 32] {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
-        hasher.update(self.bytes);
+        hasher.update(self.bytes.0);
         let result = hasher.finalize();
         let mut hash = [0u8; 32];
         hash.copy_from_slice(&result);
@@ -201,7 +194,7 @@ mod tests {
         // Ensure key bytes and base32 rendering are redacted
         assert!(!debug_str.contains("QDYG"));
         assert!(!display_str.contains("QDYG"));
-        assert!(debug_str.contains("<redacted>"));
+        assert!(debug_str.contains("[SCRUBBED]"));
         assert!(display_str.contains("<redacted>"));
     }
 
@@ -233,42 +226,6 @@ mod tests {
             chi_squared < 359.806,
             "Chi-squared statistic ({}) exceeded critical value for uniformity threshold!",
             chi_squared
-        );
-    }
-
-    #[test]
-    fn test_static_code_analysis_secretkey_does_not_derive_debug_or_display() {
-        let code = include_str!("secret_key.rs");
-
-        // Ensure no auto-deriving of Debug or Display on SecretKey
-        let mut struct_found = false;
-        let mut derive_before_struct = false;
-        let mut lines_buffer = Vec::new();
-
-        for line in code.lines() {
-            let trimmed = line.trim();
-            if trimmed.starts_with("#[derive(") {
-                lines_buffer.push(trimmed.to_string());
-            } else if trimmed.starts_with("pub struct SecretKey") {
-                struct_found = true;
-                for d in &lines_buffer {
-                    if d.contains("Debug") || d.contains("Display") {
-                        derive_before_struct = true;
-                    }
-                }
-                break;
-            } else {
-                lines_buffer.clear();
-            }
-        }
-
-        assert!(
-            struct_found,
-            "Could not locate SecretKey struct in source file"
-        );
-        assert!(
-            !derive_before_struct,
-            "SecretKey struct should NOT derive Debug or Display automatically!"
         );
     }
 }
