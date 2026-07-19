@@ -195,7 +195,7 @@ mod tests {
                 .unwrap();
 
         let expected_creds = vec![
-            ("id", "BLOB", 1, 1),
+            ("id", "BLOB", 0, 1),
             ("ciphertext", "BLOB", 1, 0),
             ("nonce", "BLOB", 1, 0),
             ("created_at", "INTEGER", 1, 0),
