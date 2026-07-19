@@ -7,3 +7,7 @@ edition = "2021"
 clap = { version = "4.4", features = ["derive"] }
 chaperone-core = { path = "../chaperone-core" }
 tokio = { version = "1.37", features = ["full"] }
+rand = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

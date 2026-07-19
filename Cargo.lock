@@ -554,6 +554,8 @@ version = "0.1.0"
 dependencies = [
  "chaperone-core",
  "clap",
+ "rand 0.8.7",
+ "tempfile",
  "tokio",
 ]
 

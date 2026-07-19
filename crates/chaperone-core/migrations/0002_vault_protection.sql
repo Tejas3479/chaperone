@@ -1,0 +1,1 @@
+ALTER TABLE vault_header ADD COLUMN is_protected INTEGER NOT NULL DEFAULT 0;

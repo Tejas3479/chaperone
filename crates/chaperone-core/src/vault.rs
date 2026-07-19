@@ -269,6 +269,53 @@ impl VaultStore {
         Ok(row.0 > 0)
     }
 
+    /// Marks the vault as protected (sets is_protected to 1)
+    pub async fn mark_protected(&self) -> Result<(), VaultError> {
+        sqlx::query("UPDATE vault_header SET is_protected = 1")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Checks if the vault is protected
+    pub async fn is_protected(&self) -> Result<bool, VaultError> {
+        let row: Option<(i64,)> = sqlx::query_as("SELECT is_protected FROM vault_header LIMIT 1")
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.0 == 1).unwrap_or(false))
+    }
+
+    /// Updates the secret_key_check column in vault_header to store the Secret Key verifier hash.
+    pub async fn set_secret_key_verifier(
+        &self,
+        verifier_hash: &[u8; 32],
+    ) -> Result<(), VaultError> {
+        sqlx::query("UPDATE vault_header SET secret_key_check = $1")
+            .bind(&verifier_hash[..])
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Retrieves the secret_key_check column value (the Secret Key verifier hash if 32 bytes).
+    pub async fn get_secret_key_verifier(&self) -> Result<[u8; 32], VaultError> {
+        let row: Option<(Vec<u8>,)> =
+            sqlx::query_as("SELECT secret_key_check FROM vault_header LIMIT 1")
+                .fetch_optional(&self.pool)
+                .await?;
+        let bytes = row
+            .ok_or_else(|| VaultError::Other("Vault not initialized".into()))?
+            .0;
+        if bytes.len() != 32 {
+            return Err(VaultError::Other(
+                "Secret key verifier has not been set (invalid size)".into(),
+            ));
+        }
+        let mut verifier = [0u8; 32];
+        verifier.copy_from_slice(&bytes);
+        Ok(verifier)
+    }
+
     /// Initializes the vault with the given PIN and returns the generated random vault key.
     pub async fn initialize_vault(&self, pin: &[u8]) -> Result<[u8; 32], VaultError> {
         let mut salt = [0u8; 16];
@@ -348,20 +395,22 @@ impl VaultStore {
         let stretched = stretch_key(&master_key);
 
         // Verify PIN via secret key check block
-        if secret_key_check.len() < 12 {
-            return Err(VaultError::Other("Invalid check block length".into()));
-        }
-        let mut check_nonce = [0u8; 12];
-        check_nonce.copy_from_slice(&secret_key_check[0..12]);
-        let check_ct = &secret_key_check[12..];
+        if secret_key_check.len() != 32 {
+            if secret_key_check.len() < 12 {
+                return Err(VaultError::Other("Invalid check block length".into()));
+            }
+            let mut check_nonce = [0u8; 12];
+            check_nonce.copy_from_slice(&secret_key_check[0..12]);
+            let check_ct = &secret_key_check[12..];
 
-        let check_bytes = decrypt_block(&stretched.1, check_ct, &check_nonce)
-            .map_err(|_| VaultError::Crypto(CryptoError::Other("Incorrect PIN".into())))?;
+            let check_bytes = decrypt_block(&stretched.1, check_ct, &check_nonce)
+                .map_err(|_| VaultError::Crypto(CryptoError::Other("Incorrect PIN".into())))?;
 
-        if check_bytes != b"chaperone-vault-check-bytes-3210" {
-            return Err(VaultError::Crypto(CryptoError::Other(
-                "Incorrect PIN".into(),
-            )));
+            if check_bytes != b"chaperone-vault-check-bytes-3210" {
+                return Err(VaultError::Crypto(CryptoError::Other(
+                    "Incorrect PIN".into(),
+                )));
+            }
         }
 
         // Decrypt vault key
@@ -614,6 +663,7 @@ mod tests {
             ("kdf_params", "TEXT", 1),
             ("protected_vault_key", "BLOB", 1),
             ("secret_key_check", "BLOB", 1),
+            ("is_protected", "INTEGER", 1),
         ];
 
         assert_eq!(cols_header.len(), expected_header.len());
