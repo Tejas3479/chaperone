@@ -76,7 +76,7 @@ fn has_active_network_connections(pid: u32) -> bool {
 #[cfg(not(target_os = "windows"))]
 fn has_active_network_connections(pid: u32) -> bool {
     // Try ss command
-    let output = Command::new("ss").args(&["-t", "-u", "-p", "-n"]).output();
+    let output = Command::new("ss").args(["-t", "-u", "-p", "-n"]).output();
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
         if stdout.contains(&format!("pid={}", pid)) {
@@ -85,7 +85,7 @@ fn has_active_network_connections(pid: u32) -> bool {
     }
     // Try lsof command as fallback
     let output = Command::new("lsof")
-        .args(&["-i", "-P", "-n", "-p", &pid.to_string()])
+        .args(["-i", "-P", "-n", "-p", &pid.to_string()])
         .output();
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);

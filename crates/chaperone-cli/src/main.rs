@@ -175,7 +175,7 @@ async fn main() {
 
             // 5. Force a backup-verification step: re-prompt the user to type back 3 words or 3 groups from the Secret Key they were just shown
             let groups: Vec<&str> = formatted_key.split('-').collect();
-            let mut indices = vec![0, 1, 2, 3, 4, 5, 6];
+            let mut indices = [0, 1, 2, 3, 4, 5, 6];
             let mut rng = rand::thread_rng();
             indices.shuffle(&mut rng);
             let mut chosen = indices[0..3].to_vec();
