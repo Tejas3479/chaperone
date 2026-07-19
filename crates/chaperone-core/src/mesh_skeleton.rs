@@ -99,28 +99,25 @@ pub async fn run_skeleton_ping() -> Result<(), Box<dyn Error>> {
         loop {
             tokio::select! {
                 event = swarm_b.select_next_some() => {
-                    match event {
-                        SwarmEvent::Behaviour(SkeletonBehaviourEvent::RequestResponse(
-                            request_response::Event::Message {
-                                message: request_response::Message::Request {
-                                    request,
-                                    channel,
-                                    ..
-                                },
+                    if let SwarmEvent::Behaviour(SkeletonBehaviourEvent::RequestResponse(
+                        request_response::Event::Message {
+                            message: request_response::Message::Request {
+                                request,
+                                channel,
                                 ..
-                            }
-                        )) => {
-                            if request.message == "hello" {
-                                let _ = swarm_b.behaviour_mut().request_response.send_response(
-                                    channel,
-                                    PingResponse { message: "world".to_string() }
-                                );
-                                if let Some(tx) = tx_result.take() {
-                                    let _ = tx.send(request.message);
-                                }
+                            },
+                            ..
+                        }
+                    )) = event {
+                        if request.message == "hello" {
+                            let _ = swarm_b.behaviour_mut().request_response.send_response(
+                                channel,
+                                PingResponse { message: "world".to_string() }
+                            );
+                            if let Some(tx) = tx_result.take() {
+                                let _ = tx.send(request.message);
                             }
                         }
-                        _ => {}
                     }
                 }
                 _ = &mut rx_shutdown => {
@@ -146,20 +143,17 @@ pub async fn run_skeleton_ping() -> Result<(), Box<dyn Error>> {
     for _ in 0..100 {
         tokio::select! {
             event = swarm_a.select_next_some() => {
-                match event {
-                    SwarmEvent::Behaviour(SkeletonBehaviourEvent::RequestResponse(
-                        request_response::Event::Message {
-                            message: request_response::Message::Response {
-                                response,
-                                ..
-                            },
+                if let SwarmEvent::Behaviour(SkeletonBehaviourEvent::RequestResponse(
+                    request_response::Event::Message {
+                        message: request_response::Message::Response {
+                            response,
                             ..
-                        }
-                    )) => {
-                        received_response = Some(response.message);
-                        break;
+                        },
+                        ..
                     }
-                    _ => {}
+                )) = event {
+                    received_response = Some(response.message);
+                    break;
                 }
             }
             _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {}
