@@ -1,0 +1,1 @@
+// chaperone-sdk: scaffold

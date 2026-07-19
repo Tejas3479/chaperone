@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/chaperone-core",
+    "crates/chaperone-protocol",
+    "crates/chaperone-bridge",
+    "crates/chaperone-relay",
+    "crates/chaperone-ledger",
+    "crates/chaperone-sdk",
+    "crates/chaperone-cli",
+    "crates/chaperone-migrate",
+]
