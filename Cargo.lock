@@ -543,6 +543,7 @@ dependencies = [
  "serde",
  "sha2",
  "sqlx",
+ "tempfile",
  "tokio",
  "x25519-dalek",
 ]

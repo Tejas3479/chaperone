@@ -1,5 +1,5 @@
 use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{Pool, Sqlite, SqlitePool};
+use sqlx::SqlitePool;
 use std::error::Error;
 use std::fmt;
 use std::path::Path;
@@ -79,7 +79,7 @@ impl VaultStore {
             .duration_since(UNIX_EPOCH)
             .map_err(|e| VaultError::Other(e.to_string()))?
             .as_secs() as i64;
-        let empty_nonce = b"";
+        let empty_nonce: &[u8] = &[];
 
         sqlx::query(
             "INSERT INTO credentials (id, ciphertext, nonce, created_at) \
