@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 rand = "0.8"
+libp2p = { version = "0.56.0", features = ["quic", "tokio", "noise", "macros"] }
+tokio = { version = "1.37", features = ["full"] }
+futures = "0.3"
