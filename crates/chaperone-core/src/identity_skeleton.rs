@@ -1,7 +1,7 @@
 //! SKELETON ONLY — replaced by the real F01 identity system in BU-101. Do not build features on top of this.
 
-use rand::RngCore;
 use rand::rngs::OsRng;
+use rand::RngCore;
 
 pub struct SkeletonIdentity {
     pub pubkey: [u8; 32],
