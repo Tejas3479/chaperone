@@ -736,6 +736,7 @@ mod tests {
 
         // Perform memory scan for the marker
         let found = mem_scan::scan_memory_for_bytes(&scan_target);
+        let _ = found;
 
         // Assert that the marker is NOT found in process memory!
         #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -863,15 +864,15 @@ mod tests {
                     let size = end - start;
                     let mut buf = vec![0u8; size];
 
-                    if mem_file.seek(SeekFrom::Start(start as u64)).is_ok() {
-                        if mem_file.read_exact(&mut buf).is_ok() {
-                            if let Some(pos) = super::find_subslice(&buf, marker) {
-                                let match_addr = start + pos;
-                                let marker_start = marker.as_ptr() as usize;
-                                let marker_end = marker_start + marker.len();
-                                if match_addr < marker_start || match_addr >= marker_end {
-                                    return true;
-                                }
+                    if mem_file.seek(SeekFrom::Start(start as u64)).is_ok()
+                        && mem_file.read_exact(&mut buf).is_ok()
+                    {
+                        if let Some(pos) = super::find_subslice(&buf, marker) {
+                            let match_addr = start + pos;
+                            let marker_start = marker.as_ptr() as usize;
+                            let marker_end = marker_start + marker.len();
+                            if match_addr < marker_start || match_addr >= marker_end {
+                                return true;
                             }
                         }
                     }
@@ -888,6 +889,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if needle.is_empty() {
             return Some(0);
