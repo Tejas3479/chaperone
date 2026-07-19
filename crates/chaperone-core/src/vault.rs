@@ -1,3 +1,4 @@
+use crate::logging::Scrubbed;
 use argon2::{Algorithm, Argon2, Params, Version};
 use hkdf::Hkdf;
 use rand::RngCore;
@@ -11,7 +12,6 @@ use std::fmt;
 use std::path::Path;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::logging::Scrubbed;
 
 pub const ARGON2_M_COST: u32 = 19456;
 pub const ARGON2_T_COST: u32 = 2;

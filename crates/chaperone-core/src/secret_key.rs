@@ -1,5 +1,5 @@
-use std::fmt;
 use crate::logging::Scrubbed;
+use std::fmt;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SecretKeyError {
@@ -40,7 +40,9 @@ impl SecretKey {
     pub fn generate_with_rng<R: rand::RngCore>(rng: &mut R) -> Self {
         let mut bytes = [0u8; 16];
         rng.fill_bytes(&mut bytes);
-        Self { bytes: Scrubbed(bytes) }
+        Self {
+            bytes: Scrubbed(bytes),
+        }
     }
 
     /// Renders the SecretKey as a Base32 string grouped in blocks of 4 characters separated by hyphens.
@@ -83,7 +85,9 @@ impl SecretKey {
 
         let mut bytes = [0u8; 16];
         bytes.copy_from_slice(&decoded_vec);
-        Ok(Self { bytes: Scrubbed(bytes) })
+        Ok(Self {
+            bytes: Scrubbed(bytes),
+        })
     }
 
     /// Computes the verifier hash of the SecretKey (SHA-256).

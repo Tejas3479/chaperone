@@ -1,5 +1,5 @@
-use chaperone_core::secret_key::SecretKey;
 use chaperone_core::logging::Scrubbed;
+use chaperone_core::secret_key::SecretKey;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,13 +24,13 @@ fn init_logging_for_test(log_dir: &Path) -> (tracing::subscriber::DefaultGuard, 
     std::fs::create_dir_all(log_dir).unwrap();
     let file_appender = tracing_appender::rolling::daily(log_dir, "chaperone.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    
+
     let subscriber = tracing_subscriber::fmt()
         .json()
         .with_writer(non_blocking)
         .with_env_filter(tracing_subscriber::EnvFilter::new("info"))
         .finish();
-        
+
     let default_guard = tracing::subscriber::set_default(subscriber);
     (default_guard, guard)
 }
@@ -63,14 +63,20 @@ fn test_logging_subsystem_writes_locally_and_redacts_keys() {
 
         // Verify that the log contains the structure but it's scrubbed
         assert!(content.contains("[SCRUBBED]"), "Log content: {}", content);
-        
+
         // Confirm the raw key's Base32 string is NOT present in the logs
-        assert!(!content.contains(&secret_key_base32), "Base32 key leaked in logs!");
-        
+        assert!(
+            !content.contains(&secret_key_base32),
+            "Base32 key leaked in logs!"
+        );
+
         // Confirm raw bytes of the key are not in the logs
         let raw_bytes = secret_key.to_bytes();
         let bytes_string = format!("{:?}", raw_bytes);
-        assert!(!content.contains(&bytes_string), "Raw key bytes leaked in logs!");
+        assert!(
+            !content.contains(&bytes_string),
+            "Raw key bytes leaked in logs!"
+        );
     }
     assert!(found_log, "No log files were written to the temp directory");
 }
@@ -97,7 +103,10 @@ fn test_logging_subsystem_does_not_make_network_calls() {
 
     // If there were no network connections initially, there should still be none
     if !initial_connections {
-        assert!(!final_connections, "Network connections were opened by the logging subsystem!");
+        assert!(
+            !final_connections,
+            "Network connections were opened by the logging subsystem!"
+        );
     }
 }
 
@@ -113,7 +122,10 @@ fn find_crates_dir() -> PathBuf {
         if let Some(parent) = dir.parent() {
             dir = parent.to_path_buf();
         } else {
-            panic!("Could not find crates directory starting from {:?}", std::env::current_dir());
+            panic!(
+                "Could not find crates directory starting from {:?}",
+                std::env::current_dir()
+            );
         }
     }
 }
@@ -130,7 +142,7 @@ fn test_sensitive_fields_are_scrubbed_in_structs() {
     for file in files {
         let content = fs::read_to_string(&file).expect("Failed to read Rust file");
         let stripped = strip_comments(&content);
-        
+
         let file_violations = scan_file_for_unscrubbed_sensitive_fields(&file, &stripped);
         violations.extend(file_violations);
     }
@@ -179,7 +191,7 @@ fn strip_comments(content: &str) -> String {
     let mut in_line_comment = false;
     let mut in_block_comment = false;
     let mut chars = content.chars().peekable();
-    
+
     while let Some(ch) = chars.next() {
         if in_line_comment {
             if ch == '\n' {
@@ -209,7 +221,7 @@ fn strip_comments(content: &str) -> String {
 fn scan_file_for_unscrubbed_sensitive_fields(file: &Path, content: &str) -> Vec<FieldViolation> {
     let mut violations = Vec::new();
     let lines: Vec<&str> = content.lines().collect();
-    
+
     let mut in_struct = false;
     let mut struct_name = String::new();
     let mut brace_count = 0;
@@ -241,15 +253,17 @@ fn scan_file_for_unscrubbed_sensitive_fields(file: &Path, content: &str) -> Vec<
 
     for line in lines {
         let trimmed = line.trim();
-        
+
         if !in_struct {
             if trimmed.contains("struct ") && !trimmed.contains(";") {
                 // Try parsing struct name
                 if let Some(struct_idx) = trimmed.find("struct ") {
                     let after_struct = &trimmed[struct_idx + 7..];
-                    let end_idx = after_struct.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(after_struct.len());
+                    let end_idx = after_struct
+                        .find(|c: char| !c.is_alphanumeric() && c != '_')
+                        .unwrap_or(after_struct.len());
                     struct_name = after_struct[..end_idx].to_string();
-                    
+
                     if trimmed.contains('{') {
                         in_struct = true;
                         brace_count = 1;
@@ -294,18 +308,19 @@ fn scan_file_for_unscrubbed_sensitive_fields(file: &Path, content: &str) -> Vec<
                 }
 
                 // Check if field name contains any sensitive keyword
-                let is_sensitive = sensitive_keywords.iter().any(|&keyword| {
-                    field_name.to_lowercase().contains(keyword)
-                });
+                let is_sensitive = sensitive_keywords
+                    .iter()
+                    .any(|&keyword| field_name.to_lowercase().contains(keyword));
 
                 if is_sensitive {
                     // Check if it is whitelisted
                     let is_whitelisted = whitelist.iter().any(|&w| field_name == w);
-                    
+
                     if !is_whitelisted {
                         // Check if it is wrapped in Scrubbed
-                        let is_scrubbed = field_type.contains("Scrubbed") || field_type.contains("crate::logging::Scrubbed");
-                        
+                        let is_scrubbed = field_type.contains("Scrubbed")
+                            || field_type.contains("crate::logging::Scrubbed");
+
                         if !is_scrubbed {
                             violations.push(FieldViolation {
                                 file: file.to_path_buf(),
