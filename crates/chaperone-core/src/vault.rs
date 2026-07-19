@@ -752,12 +752,15 @@ mod tests {
         use windows_sys::Win32::System::Memory::{
             VirtualQuery, MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_PRIVATE, PAGE_READWRITE,
         };
+        use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+        use windows_sys::Win32::System::Threading::GetCurrentProcess;
         use std::ffi::c_void;
 
         pub fn scan_memory_for_bytes(marker: &[u8]) -> bool {
             let mut address: usize = 0;
             let mut mbi = std::mem::MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
             let query_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
+            let h_process = unsafe { GetCurrentProcess() };
 
             loop {
                 let result = unsafe {
@@ -780,15 +783,30 @@ mod tests {
                     && info.Protect == PAGE_READWRITE
                     && info.Type == MEM_PRIVATE
                 {
-                    let slice = unsafe {
-                        std::slice::from_raw_parts(info.BaseAddress as *const u8, info.RegionSize)
+                    // Copy memory region into a local buffer via ReadProcessMemory
+                    // This is 100% crash-proof because the kernel handles faults internally.
+                    let mut temp_buf = vec![0u8; info.RegionSize];
+                    let mut bytes_read = 0;
+                    
+                    let ok = unsafe {
+                        ReadProcessMemory(
+                            h_process,
+                            info.BaseAddress,
+                            temp_buf.as_mut_ptr() as *mut c_void,
+                            info.RegionSize,
+                            &mut bytes_read,
+                        )
                     };
-                    if let Some(pos) = super::find_subslice(slice, marker) {
-                        let match_addr = info.BaseAddress as usize + pos;
-                        let marker_start = marker.as_ptr() as usize;
-                        let marker_end = marker_start + marker.len();
-                        if match_addr < marker_start || match_addr >= marker_end {
-                            return true;
+                    
+                    if ok != 0 && bytes_read > 0 {
+                        let read_slice = &temp_buf[..bytes_read];
+                        if let Some(pos) = super::find_subslice(read_slice, marker) {
+                            let match_addr = info.BaseAddress as usize + pos;
+                            let marker_start = marker.as_ptr() as usize;
+                            let marker_end = marker_start + marker.len();
+                            if match_addr < marker_start || match_addr >= marker_end {
+                                return true;
+                            }
                         }
                     }
                 }
@@ -809,14 +827,18 @@ mod tests {
     #[cfg(target_os = "linux")]
     mod mem_scan {
         use std::fs::File;
-        use std::io::{BufRead, BufReader};
+        use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 
         pub fn scan_memory_for_bytes(marker: &[u8]) -> bool {
-            let file = match File::open("/proc/self/maps") {
+            let maps_file = match File::open("/proc/self/maps") {
                 Ok(f) => f,
                 Err(_) => return false,
             };
-            let reader = BufReader::new(file);
+            let mut mem_file = match File::open("/proc/self/mem") {
+                Ok(f) => f,
+                Err(_) => return false,
+            };
+            let reader = BufReader::new(maps_file);
 
             for line_res in reader.lines() {
                 let line = match line_res {
@@ -840,15 +862,22 @@ mod tests {
                     Err(_) => continue,
                 };
                 let perms = parts[1];
-                if perms.starts_with('r') {
-                    let slice =
-                        unsafe { std::slice::from_raw_parts(start as *const u8, end - start) };
-                    if let Some(pos) = super::find_subslice(slice, marker) {
-                        let match_addr = start + pos;
-                        let marker_start = marker.as_ptr() as usize;
-                        let marker_end = marker_start + marker.len();
-                        if match_addr < marker_start || match_addr >= marker_end {
-                            return true;
+                
+                // Surgical filter: committed read-write regions (stack and heap)
+                if perms.starts_with("rw") {
+                    let size = end - start;
+                    let mut buf = vec![0u8; size];
+                    
+                    if mem_file.seek(SeekFrom::Start(start as u64)).is_ok() {
+                        if mem_file.read_exact(&mut buf).is_ok() {
+                            if let Some(pos) = super::find_subslice(&buf, marker) {
+                                let match_addr = start + pos;
+                                let marker_start = marker.as_ptr() as usize;
+                                let marker_end = marker_start + marker.len();
+                                if match_addr < marker_start || match_addr >= marker_end {
+                                    return true;
+                                }
+                            }
                         }
                     }
                 }
