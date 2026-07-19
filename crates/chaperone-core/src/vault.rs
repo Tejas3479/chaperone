@@ -749,12 +749,12 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     mod mem_scan {
+        use std::ffi::c_void;
+        use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
         use windows_sys::Win32::System::Memory::{
             VirtualQuery, MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_PRIVATE, PAGE_READWRITE,
         };
-        use windows_sys::Win32::System::Diagnostics::Debug::ReadProcessMemory;
         use windows_sys::Win32::System::Threading::GetCurrentProcess;
-        use std::ffi::c_void;
 
         pub fn scan_memory_for_bytes(marker: &[u8]) -> bool {
             let mut address: usize = 0;
@@ -763,13 +763,8 @@ mod tests {
             let h_process = unsafe { GetCurrentProcess() };
 
             loop {
-                let result = unsafe {
-                    VirtualQuery(
-                        address as *const c_void,
-                        mbi.as_mut_ptr(),
-                        query_size,
-                    )
-                };
+                let result =
+                    unsafe { VirtualQuery(address as *const c_void, mbi.as_mut_ptr(), query_size) };
 
                 if result == 0 {
                     break;
@@ -787,7 +782,7 @@ mod tests {
                     // This is 100% crash-proof because the kernel handles faults internally.
                     let mut temp_buf = vec![0u8; info.RegionSize];
                     let mut bytes_read = 0;
-                    
+
                     let ok = unsafe {
                         ReadProcessMemory(
                             h_process,
@@ -797,7 +792,7 @@ mod tests {
                             &mut bytes_read,
                         )
                     };
-                    
+
                     if ok != 0 && bytes_read > 0 {
                         let read_slice = &temp_buf[..bytes_read];
                         if let Some(pos) = super::find_subslice(read_slice, marker) {
@@ -862,12 +857,12 @@ mod tests {
                     Err(_) => continue,
                 };
                 let perms = parts[1];
-                
+
                 // Surgical filter: committed read-write regions (stack and heap)
                 if perms.starts_with("rw") {
                     let size = end - start;
                     let mut buf = vec![0u8; size];
-                    
+
                     if mem_file.seek(SeekFrom::Start(start as u64)).is_ok() {
                         if mem_file.read_exact(&mut buf).is_ok() {
                             if let Some(pos) = super::find_subslice(&buf, marker) {
