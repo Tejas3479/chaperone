@@ -170,6 +170,69 @@ fn decrypt_block(
     Ok(decrypted.to_vec())
 }
 
+pub struct VaultHandle {
+    vault_key: zeroize::Zeroizing<[u8; 32]>,
+    store: VaultStore,
+}
+
+impl fmt::Debug for VaultHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VaultHandle")
+            .field("vault_key", &"<redacted>")
+            .finish()
+    }
+}
+
+impl VaultHandle {
+    /// Consumes the handle and drops it, automatically zeroing the vault key.
+    pub fn lock(self) {
+        drop(self);
+    }
+
+    /// Reads and decrypts a credential associated with the given UUID.
+    pub async fn read<T: serde::de::DeserializeOwned>(
+        &self,
+        id: uuid::Uuid,
+    ) -> Result<T, VaultError> {
+        let id_bytes = id.into_bytes();
+        let decrypted_bytes = self
+            .store
+            .read_credential(&self.vault_key, &id_bytes[..])
+            .await?;
+
+        let value = serde_json::from_slice(&decrypted_bytes)
+            .map_err(|e| VaultError::Other(e.to_string()))?;
+
+        // Zeroize decrypted plaintext bytes in memory
+        use zeroize::Zeroize;
+        let mut temp = decrypted_bytes;
+        temp.zeroize();
+
+        Ok(value)
+    }
+
+    /// Encrypts and writes a credential associated with the given UUID.
+    pub async fn write<T: serde::Serialize>(
+        &self,
+        id: uuid::Uuid,
+        value: &T,
+    ) -> Result<(), VaultError> {
+        let id_bytes = id.into_bytes();
+        let mut plaintext =
+            serde_json::to_vec(value).map_err(|e| VaultError::Other(e.to_string()))?;
+
+        self.store
+            .insert_credential(&self.vault_key, &id_bytes[..], &plaintext)
+            .await?;
+
+        // Zeroize temporary plaintext serialization buffer in memory
+        use zeroize::Zeroize;
+        plaintext.zeroize();
+
+        Ok(())
+    }
+}
+
 pub struct VaultStore {
     pub pool: SqlitePool,
 }
@@ -250,7 +313,17 @@ impl VaultStore {
     }
 
     /// Unlocks the vault with the PIN and retrieves the master vault key.
-    pub async fn unlock(&self, pin: &[u8]) -> Result<[u8; 32], VaultError> {
+    /// Consumes the VaultStore and returns a VaultHandle wrapping the unlocked key.
+    pub async fn unlock(self, pin: &[u8]) -> Result<VaultHandle, VaultError> {
+        let vault_key = self.unlock_key(pin).await?;
+        Ok(VaultHandle {
+            vault_key: zeroize::Zeroizing::new(vault_key),
+            store: self,
+        })
+    }
+
+    /// Unlocks the vault with the PIN and retrieves the master vault key.
+    pub async fn unlock_key(&self, pin: &[u8]) -> Result<[u8; 32], VaultError> {
         let row: Option<(String, String, Vec<u8>, Vec<u8>)> = sqlx::query_as(
             "SELECT kdf_algo, kdf_params, protected_vault_key, secret_key_check FROM vault_header LIMIT 1"
         )
@@ -441,7 +514,7 @@ mod tests {
 
         // Unlock vault
         let unlocked_key = store.unlock(pin).await.unwrap();
-        assert_eq!(vault_key, unlocked_key);
+        assert_eq!(vault_key, *unlocked_key.vault_key);
     }
 
     #[tokio::test]
@@ -571,5 +644,238 @@ mod tests {
             assert_eq!(cols_creds[idx].3, notnull);
             assert_eq!(cols_creds[idx].5, pk);
         }
+    }
+
+    // --- BU-104 STATEFUL UNLOCK/LOCK & MEMORY HYGIENE TESTS ---
+
+    use proptest::prelude::*;
+
+    #[derive(Clone, Debug)]
+    enum Op {
+        Write(uuid::Uuid, String),
+        Read(uuid::Uuid),
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+        #[test]
+        fn test_random_vault_operations_proptest(
+            ops in prop::collection::vec(
+                prop_oneof![
+                    any::<[u8; 16]>().prop_map(|bytes| Op::Write(uuid::Uuid::from_bytes(bytes), "random-data-payload-123456789".to_string())),
+                    any::<[u8; 16]>().prop_map(|bytes| Op::Read(uuid::Uuid::from_bytes(bytes))),
+                ],
+                1..20
+            )
+        ) {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let temp_dir = tempfile::tempdir().unwrap();
+                let db_path = temp_dir.path().join("proptest_vault.db");
+                let store = VaultStore::open(&db_path).await.unwrap();
+
+                let pin = b"proptest-secret-pin-999";
+                store.initialize_vault(pin).await.unwrap();
+
+                // Unlock -> produces handle
+                let handle = store.unlock(pin).await.unwrap();
+
+                let mut shadow_db = std::collections::HashMap::new();
+
+                for op in ops {
+                    match op {
+                        Op::Write(id, val) => {
+                            handle.write(id, &val).await.unwrap();
+                            shadow_db.insert(id, val);
+                        }
+                        Op::Read(id) => {
+                            let res: Result<String, VaultError> = handle.read(id).await;
+                            if let Some(expected) = shadow_db.get(&id) {
+                                assert_eq!(res.unwrap(), *expected);
+                            } else {
+                                assert!(res.is_err());
+                            }
+                        }
+                    }
+                }
+
+                // Lock -> handle consumed and key zeroized
+                handle.lock();
+            });
+        }
+    }
+
+    #[tokio::test]
+    async fn test_memory_scan_verifies_marker_is_erased() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let db_path = temp_dir.path().join("test_mem_scan.db");
+        let store = VaultStore::open(&db_path).await.unwrap();
+
+        let pin = b"testpin123";
+        store.initialize_vault(pin).await.unwrap();
+
+        // Use a highly unique marker string.
+        let marker = zeroize::Zeroizing::new("distinctive_marker_bytes_99887766".to_string());
+
+        // Unlock
+        let handle = store.unlock(pin).await.unwrap();
+
+        // Write marker
+        let id = uuid::Uuid::new_v4();
+        handle.write(id, &*marker).await.unwrap();
+
+        // Lock (drops handle, zeroing key and intermediate buffers)
+        handle.lock();
+
+        // Copy the target bytes to look for, then drop/zeroize the Zeroizing copy of marker
+        let scan_target = marker.as_bytes().to_vec();
+        drop(marker); // drops Zeroizing, which zeroizes the String's characters/buffer!
+
+        // Sleep to ensure OS/allocator settles
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Perform memory scan for the marker
+        let found = mem_scan::scan_memory_for_bytes(&scan_target);
+
+        // Assert that the marker is NOT found in process memory!
+        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        {
+            assert!(
+                !found,
+                "Found the sensitive plaintext marker in memory after vault lock!"
+            );
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    mod mem_scan {
+        use windows_sys::Win32::System::Memory::{
+            VirtualQuery, MEMORY_BASIC_INFORMATION, MEM_COMMIT, MEM_PRIVATE, PAGE_READWRITE,
+        };
+        use std::ffi::c_void;
+
+        pub fn scan_memory_for_bytes(marker: &[u8]) -> bool {
+            let mut address: usize = 0;
+            let mut mbi = std::mem::MaybeUninit::<MEMORY_BASIC_INFORMATION>::uninit();
+            let query_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
+
+            loop {
+                let result = unsafe {
+                    VirtualQuery(
+                        address as *const c_void,
+                        mbi.as_mut_ptr(),
+                        query_size,
+                    )
+                };
+
+                if result == 0 {
+                    break;
+                }
+
+                let info = unsafe { mbi.assume_init() };
+
+                // Surgical filter: Only scan private, committed memory with read-write protection (stack and heap)
+                // This completely avoids image files, mapped files, system DLLs, and PAGE_GUARD page faults.
+                if info.State == MEM_COMMIT
+                    && info.Protect == PAGE_READWRITE
+                    && info.Type == MEM_PRIVATE
+                {
+                    let slice = unsafe {
+                        std::slice::from_raw_parts(info.BaseAddress as *const u8, info.RegionSize)
+                    };
+                    if let Some(pos) = super::find_subslice(slice, marker) {
+                        let match_addr = info.BaseAddress as usize + pos;
+                        let marker_start = marker.as_ptr() as usize;
+                        let marker_end = marker_start + marker.len();
+                        if match_addr < marker_start || match_addr >= marker_end {
+                            return true;
+                        }
+                    }
+                }
+
+                if let Some(next_addr) = address.checked_add(info.RegionSize) {
+                    if next_addr <= address {
+                        break;
+                    }
+                    address = next_addr;
+                } else {
+                    break;
+                }
+            }
+            false
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    mod mem_scan {
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+
+        pub fn scan_memory_for_bytes(marker: &[u8]) -> bool {
+            let file = match File::open("/proc/self/maps") {
+                Ok(f) => f,
+                Err(_) => return false,
+            };
+            let reader = BufReader::new(file);
+
+            for line_res in reader.lines() {
+                let line = match line_res {
+                    Ok(l) => l,
+                    Err(_) => continue,
+                };
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() < 2 {
+                    continue;
+                }
+                let range: Vec<&str> = parts[0].split('-').collect();
+                if range.len() != 2 {
+                    continue;
+                }
+                let start = match usize::from_str_radix(range[0], 16) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let end = match usize::from_str_radix(range[1], 16) {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
+                let perms = parts[1];
+                if perms.starts_with('r') {
+                    let slice =
+                        unsafe { std::slice::from_raw_parts(start as *const u8, end - start) };
+                    if let Some(pos) = super::find_subslice(slice, marker) {
+                        let match_addr = start + pos;
+                        let marker_start = marker.as_ptr() as usize;
+                        let marker_end = marker_start + marker.len();
+                        if match_addr < marker_start || match_addr >= marker_end {
+                            return true;
+                        }
+                    }
+                }
+            }
+            false
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    mod mem_scan {
+        pub fn scan_memory_for_bytes(_marker: &[u8]) -> bool {
+            false
+        }
+    }
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        if needle.is_empty() {
+            return Some(0);
+        }
+        if haystack.len() < needle.len() {
+            return None;
+        }
+        for i in 0..=(haystack.len() - needle.len()) {
+            if &haystack[i..(i + needle.len())] == needle {
+                return Some(i);
+            }
+        }
+        None
     }
 }

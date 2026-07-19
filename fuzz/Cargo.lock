@@ -501,10 +501,13 @@ dependencies = [
  "rand 0.8.7",
  "ring",
  "serde",
+ "serde_json",
  "sha2",
  "sqlx",
  "tokio",
+ "uuid",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
