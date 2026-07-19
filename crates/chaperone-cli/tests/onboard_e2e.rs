@@ -65,7 +65,12 @@ fn has_active_network_connections(pid: u32) -> bool {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if let Some(&last) = parts.last() {
                 if last == pid.to_string() {
-                    return true;
+                    let is_loopback = line.contains("127.0.0.1")
+                        || line.contains("[::1]")
+                        || line.contains("localhost");
+                    if !is_loopback {
+                        return true;
+                    }
                 }
             }
         }
@@ -79,8 +84,15 @@ fn has_active_network_connections(pid: u32) -> bool {
     let output = Command::new("ss").args(["-t", "-u", "-p", "-n"]).output();
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        if stdout.contains(&format!("pid={}", pid)) {
-            return true;
+        for line in stdout.lines() {
+            if line.contains(&format!("pid={}", pid)) {
+                let is_loopback = line.contains("127.0.0.1")
+                    || line.contains("::1")
+                    || line.contains("localhost");
+                if !is_loopback {
+                    return true;
+                }
+            }
         }
     }
     // Try lsof command as fallback
@@ -89,9 +101,15 @@ fn has_active_network_connections(pid: u32) -> bool {
         .output();
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let lines: Vec<&str> = stdout.lines().collect();
-        if lines.len() > 1 {
-            return true;
+        for line in stdout.lines() {
+            if line.contains("COMMAND") || line.trim().is_empty() {
+                continue;
+            }
+            let is_loopback =
+                line.contains("127.0.0.1") || line.contains("::1") || line.contains("localhost");
+            if !is_loopback {
+                return true;
+            }
         }
     }
     false
