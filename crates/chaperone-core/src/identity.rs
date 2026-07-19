@@ -6,7 +6,6 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::sync::Mutex;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use x25519_dalek::StaticSecret;
@@ -82,9 +81,13 @@ impl KeychainBackend for RealKeychainBackend {
     }
 }
 
-pub struct MockKeychainBackend {
-    store: Mutex<HashMap<(String, String), String>>,
+use std::cell::RefCell;
+
+thread_local! {
+    static THREAD_STORE: RefCell<HashMap<(String, String), String>> = RefCell::new(HashMap::new());
 }
+
+pub struct MockKeychainBackend;
 
 impl Default for MockKeychainBackend {
     fn default() -> Self {
@@ -94,9 +97,7 @@ impl Default for MockKeychainBackend {
 
 impl MockKeychainBackend {
     pub fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
+        Self
     }
 }
 
@@ -107,31 +108,38 @@ impl KeychainBackend for MockKeychainBackend {
         username: &str,
         password: &str,
     ) -> Result<(), IdentityError> {
-        let mut store = self.store.lock().unwrap();
-        store.insert(
-            (service.to_string(), username.to_string()),
-            password.to_string(),
-        );
+        THREAD_STORE.with(|store| {
+            store.borrow_mut().insert(
+                (service.to_string(), username.to_string()),
+                password.to_string(),
+            );
+        });
         Ok(())
     }
 
     fn get_password(&self, service: &str, username: &str) -> Result<String, IdentityError> {
-        let store = self.store.lock().unwrap();
-        store
-            .get(&(service.to_string(), username.to_string()))
-            .cloned()
-            .ok_or(IdentityError::NotBootstrapped)
+        THREAD_STORE.with(|store| {
+            store
+                .borrow()
+                .get(&(service.to_string(), username.to_string()))
+                .cloned()
+                .ok_or(IdentityError::NotBootstrapped)
+        })
     }
 
     fn delete_password(&self, service: &str, username: &str) -> Result<(), IdentityError> {
-        let mut store = self.store.lock().unwrap();
-        store.remove(&(service.to_string(), username.to_string()));
+        THREAD_STORE.with(|store| {
+            store
+                .borrow_mut()
+                .remove(&(service.to_string(), username.to_string()));
+        });
         Ok(())
     }
 
     fn reset(&self) {
-        let mut store = self.store.lock().unwrap();
-        store.clear();
+        THREAD_STORE.with(|store| {
+            store.borrow_mut().clear();
+        });
     }
 }
 
