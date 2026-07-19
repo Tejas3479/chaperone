@@ -80,6 +80,7 @@ fn has_active_network_connections(pid: u32) -> bool {
 
 #[cfg(not(target_os = "windows"))]
 fn has_active_network_connections(pid: u32) -> bool {
+    let mut detected = false;
     // Try ss command
     let output = Command::new("ss").args(["-t", "-u", "-p", "-n"]).output();
     if let Ok(out) = output {
@@ -90,7 +91,8 @@ fn has_active_network_connections(pid: u32) -> bool {
                     || line.contains("::1")
                     || line.contains("localhost");
                 if !is_loopback {
-                    return true;
+                    eprintln!("DEBUG ss matched: {}", line);
+                    detected = true;
                 }
             }
         }
@@ -108,11 +110,12 @@ fn has_active_network_connections(pid: u32) -> bool {
             let is_loopback =
                 line.contains("127.0.0.1") || line.contains("::1") || line.contains("localhost");
             if !is_loopback {
-                return true;
+                eprintln!("DEBUG lsof matched: {}", line);
+                detected = true;
             }
         }
     }
-    false
+    detected
 }
 
 #[tokio::test]
