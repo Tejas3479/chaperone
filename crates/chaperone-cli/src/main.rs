@@ -1,3 +1,5 @@
 // chaperone-cli: scaffold
 
-fn main() {}
+fn main() {
+    let x = 1;
+}
