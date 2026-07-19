@@ -124,24 +124,24 @@ mod tests {
 
     #[test]
     fn test_vectors_conform_to_fixed_outputs() {
-        // Test with deterministic StdRng seed
-        let mut rng = rand::rngs::StdRng::seed_from_u64(123456789);
+        // Test with deterministic ChaCha8Rng seed
+        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(123456789);
         let sk1 = SecretKey::generate_with_rng(&mut rng);
         let sk2 = SecretKey::generate_with_rng(&mut rng);
 
-        // Ensure generation from same seed sequence is consistent
+        // Ensure generation from same seed sequence is consistent across platforms
         assert_eq!(
             sk1.to_bytes(),
-            [130, 241, 102, 235, 114, 219, 137, 247, 7, 222, 106, 172, 169, 12, 109, 116]
+            [223, 173, 236, 2, 70, 133, 226, 163, 221, 131, 225, 21, 63, 96, 43, 168]
         );
         assert_eq!(
             sk2.to_bytes(),
-            [163, 16, 73, 219, 170, 71, 91, 108, 14, 187, 85, 235, 176, 2, 45, 13]
+            [209, 91, 10, 132, 181, 244, 216, 58, 207, 186, 232, 68, 218, 185, 93, 40]
         );
 
         // Base32 representation grouping check
-        assert_eq!(sk1.to_base32(), "QDYG-N222-3GGQ-O7PO-VJWS-SDWY-2Q");
-        assert_eq!(sk2.to_base32(), "UMIE-HP5K-I45W-YDXL-KXV3-X2WS-CQ");
+        assert_eq!(sk1.to_base32(), "36W6-YASG-QXRK-HXMD-4EKT-6YBL-VA");
+        assert_eq!(sk2.to_base32(), "2FNQ-VBFV-6TMD-VT52-5BCN-VOK5-FA");
     }
 
     #[test]
@@ -171,7 +171,11 @@ mod tests {
 
         // Invalid formats
         assert!(SecretKey::from_base32("too-short").is_err());
-        assert!(SecretKey::from_base32(&formatted.replace('Q', "8")).is_err()); // '8' is invalid in RFC 4648 Base32
+
+        // Guarantee an invalid character by replacing the first character with '8'
+        let mut invalid_char_str = formatted.clone();
+        invalid_char_str.replace_range(0..1, "8");
+        assert!(SecretKey::from_base32(&invalid_char_str).is_err());
     }
 
     #[test]
