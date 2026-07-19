@@ -99,7 +99,7 @@ fn has_active_network_connections(pid: u32) -> bool {
     }
     // Try lsof command as fallback
     let output = Command::new("lsof")
-        .args(["-i", "-P", "-n", "-p", &pid.to_string()])
+        .args(["-a", "-i", "-P", "-n", "-p", &pid.to_string()])
         .output();
     if let Ok(out) = output {
         let stdout = String::from_utf8_lossy(&out.stdout);
