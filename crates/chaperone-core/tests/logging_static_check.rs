@@ -314,7 +314,7 @@ fn scan_file_for_unscrubbed_sensitive_fields(file: &Path, content: &str) -> Vec<
 
                 if is_sensitive {
                     // Check if it is whitelisted
-                    let is_whitelisted = whitelist.iter().any(|&w| field_name == w);
+                    let is_whitelisted = whitelist.contains(&field_name);
 
                     if !is_whitelisted {
                         // Check if it is wrapped in Scrubbed
