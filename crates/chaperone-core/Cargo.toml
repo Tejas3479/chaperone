@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rand = "0.8"
+data-encoding = "2.11"
 libp2p = { version = "0.56.0", features = ["quic", "tokio", "noise", "macros", "request-response", "json"] }
 tokio = { version = "1.37", features = ["full"] }
 futures = "0.3"
