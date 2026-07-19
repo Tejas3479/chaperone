@@ -1,0 +1,17 @@
+[package]
+name = "chaperone-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+chaperone-core = { path = "../crates/chaperone-core" }
+
+[[bin]]
+name = "vault_nonce_reuse"
+path = "fuzz_targets/vault_nonce_reuse.rs"
+test = false
+doc = false

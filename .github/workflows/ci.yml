@@ -41,3 +41,8 @@ jobs:
 
       - name: Run tests
         run: cargo test --workspace
+
+      - name: Check fuzz target (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo check --manifest-path fuzz/Cargo.toml
+
