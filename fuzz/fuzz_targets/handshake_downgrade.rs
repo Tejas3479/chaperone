@@ -98,7 +98,7 @@ fuzz_target!(|data: &[u8]| {
                         let idx = i % ct.len();
                         ct[idx] ^= byte;
                     }
-
+                }
             }
         }
         5 => {
@@ -133,8 +133,7 @@ fuzz_target!(|data: &[u8]| {
         || mutated_init.pq_kem_ciphertext != base_init.pq_kem_ciphertext;
 
     let is_pq_stripped = !mutated_init.capabilities.contains(&"PQ_MLKEM_768".to_string())
-        || mutated_init.pq_kem_ciphertext.is_none()
-        || mutated_init.pq_kem_ciphertext.as_ref().map_or(true, |c| c.is_empty());
+        || mutated_init.pq_kem_ciphertext.as_ref().is_none_or(|c| c.is_empty());
 
     // Call respond() under test
     match respond(bob_identity, &mutated_init, true) {
