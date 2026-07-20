@@ -1,5 +1,6 @@
 // chaperone-core: scaffold
 
+pub mod handshake;
 pub mod identity;
 pub mod identity_skeleton;
 pub mod logging;

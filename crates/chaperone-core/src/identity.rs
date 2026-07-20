@@ -16,6 +16,7 @@ pub enum IdentityError {
     AlreadyBootstrapped,
     CorruptExistingIdentity(String),
     NotBootstrapped,
+    IdentityConversionError(String),
 }
 
 impl fmt::Display for IdentityError {
@@ -25,11 +26,42 @@ impl fmt::Display for IdentityError {
             Self::AlreadyBootstrapped => write!(f, "Identity is already bootstrapped"),
             Self::CorruptExistingIdentity(msg) => write!(f, "Corrupt existing identity: {}", msg),
             Self::NotBootstrapped => write!(f, "Identity has not been bootstrapped yet"),
+            Self::IdentityConversionError(msg) => write!(f, "Identity conversion error: {}", msg),
         }
     }
 }
 
 impl Error for IdentityError {}
+
+/// Helper function to parse did_key back to raw public key bytes.
+pub fn did_key_to_bytes(did_key: &str) -> Result<[u8; 32], IdentityError> {
+    if !did_key.starts_with("did:key:z") {
+        return Err(IdentityError::IdentityConversionError(
+            "Invalid did:key prefix".into(),
+        ));
+    }
+    let encoded = &did_key["did:key:z".len()..];
+    let decoded = bs58::decode(encoded)
+        .into_vec()
+        .map_err(|e| IdentityError::IdentityConversionError(e.to_string()))?;
+
+    if decoded.len() != 34 {
+        return Err(IdentityError::IdentityConversionError(format!(
+            "Invalid decoded did:key length: {} (expected 34)",
+            decoded.len()
+        )));
+    }
+    if decoded[0] != 0xed || decoded[1] != 0x01 {
+        return Err(IdentityError::IdentityConversionError(format!(
+            "Invalid multicodec did:key prefix: [0x{:x}, 0x{:x}]",
+            decoded[0], decoded[1]
+        )));
+    }
+
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&decoded[2..]);
+    Ok(bytes)
+}
 
 pub trait KeychainBackend: Send + Sync {
     fn set_password(
@@ -324,6 +356,92 @@ impl LocalIdentity {
             created_at,
             rotation_epoch,
         })
+    }
+
+    /// Loads the private Ed25519 signing key from the keychain.
+    pub fn load_signing_key(&self) -> Result<SigningKey, IdentityError> {
+        let keychain = get_keychain();
+        let signing_b58 = keychain.get_password("chaperone-signing-key", "default")?;
+        let signing_bytes = bs58::decode(signing_b58)
+            .into_vec()
+            .map_err(|e| IdentityError::CorruptExistingIdentity(e.to_string()))?;
+        if signing_bytes.len() != 32 {
+            return Err(IdentityError::CorruptExistingIdentity(
+                "Invalid signing key length".into(),
+            ));
+        }
+        let mut signing_priv_bytes = [0u8; 32];
+        signing_priv_bytes.copy_from_slice(&signing_bytes);
+        Ok(SigningKey::from_bytes(&signing_priv_bytes))
+    }
+
+    /// Loads the private X25519 agreement key from the keychain.
+    pub fn load_agreement_key(&self) -> Result<StaticSecret, IdentityError> {
+        let keychain = get_keychain();
+        let agreement_b58 = keychain.get_password("chaperone-agreement-key", "default")?;
+        let agreement_bytes = bs58::decode(agreement_b58)
+            .into_vec()
+            .map_err(|e| IdentityError::CorruptExistingIdentity(e.to_string()))?;
+        if agreement_bytes.len() != 32 {
+            return Err(IdentityError::CorruptExistingIdentity(
+                "Invalid agreement key length".into(),
+            ));
+        }
+        let mut agreement_priv_bytes = [0u8; 32];
+        agreement_priv_bytes.copy_from_slice(&agreement_bytes);
+        Ok(StaticSecret::from(agreement_priv_bytes))
+    }
+
+    /// Generates a new signed prekey, signs it with the signing key, and stores its private key in the keychain.
+    /// Returns `(signed_prekey_pub, signature)`.
+    pub fn generate_and_save_signed_prekey(&self) -> Result<([u8; 32], [u8; 64]), IdentityError> {
+        use ed25519_dalek::Signer;
+
+        let signing_key = self.load_signing_key()?;
+
+        // Generate static secret
+        let mut entropy = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut entropy);
+        let prekey_secret = StaticSecret::from(entropy);
+        let prekey_pub = x25519_dalek::PublicKey::from(&prekey_secret);
+        let prekey_pub_bytes = prekey_pub.to_bytes();
+
+        // Sign prekey
+        let signature = signing_key.sign(&prekey_pub_bytes);
+        let signature_bytes = signature.to_bytes();
+
+        // Store prekey private key in keychain
+        let prekey_priv_bytes = prekey_secret.to_bytes();
+        let prekey_b58 = bs58::encode(prekey_priv_bytes).into_string();
+
+        let keychain = get_keychain();
+        keychain.set_password("chaperone-signed-prekey", "default", &prekey_b58)?;
+
+        Ok((prekey_pub_bytes, signature_bytes))
+    }
+
+    /// Loads the private signed prekey X25519 key from the keychain.
+    pub fn load_signed_prekey(&self) -> Result<StaticSecret, IdentityError> {
+        let keychain = get_keychain();
+        let prekey_b58 = keychain.get_password("chaperone-signed-prekey", "default")?;
+        let prekey_bytes = bs58::decode(prekey_b58)
+            .into_vec()
+            .map_err(|e| IdentityError::CorruptExistingIdentity(e.to_string()))?;
+        if prekey_bytes.len() != 32 {
+            return Err(IdentityError::CorruptExistingIdentity(
+                "Invalid signed prekey length".into(),
+            ));
+        }
+        let mut prekey_priv_bytes = [0u8; 32];
+        prekey_priv_bytes.copy_from_slice(&prekey_bytes);
+        Ok(StaticSecret::from(prekey_priv_bytes))
+    }
+
+    /// Returns the public X25519 agreement key associated with this identity.
+    pub fn public_agreement_key(&self) -> Result<[u8; 32], IdentityError> {
+        let priv_key = self.load_agreement_key()?;
+        let pub_key = x25519_dalek::PublicKey::from(&priv_key);
+        Ok(pub_key.to_bytes())
     }
 }
 

@@ -1,5 +1,4 @@
-use crate::identity::LocalIdentity;
-use bs58;
+use crate::identity::{did_key_to_bytes, LocalIdentity};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -220,36 +219,6 @@ impl RotationChain {
     pub fn records_mut(&mut self) -> &mut Vec<RotationRecord> {
         &mut self.records
     }
-}
-
-/// Helper function to parse did_key back to raw public key bytes.
-fn did_key_to_bytes(did_key: &str) -> Result<[u8; 32], RotationError> {
-    if !did_key.starts_with("did:key:z") {
-        return Err(RotationError::IdentityConversionError(
-            "Invalid did:key prefix".into(),
-        ));
-    }
-    let encoded = &did_key["did:key:z".len()..];
-    let decoded = bs58::decode(encoded)
-        .into_vec()
-        .map_err(|e| RotationError::IdentityConversionError(e.to_string()))?;
-
-    if decoded.len() != 34 {
-        return Err(RotationError::IdentityConversionError(format!(
-            "Invalid decoded did:key length: {} (expected 34)",
-            decoded.len()
-        )));
-    }
-    if decoded[0] != 0xed || decoded[1] != 0x01 {
-        return Err(RotationError::IdentityConversionError(format!(
-            "Invalid multicodec did:key prefix: [0x{:x}, 0x{:x}]",
-            decoded[0], decoded[1]
-        )));
-    }
-
-    let mut bytes = [0u8; 32];
-    bytes.copy_from_slice(&decoded[2..]);
-    Ok(bytes)
 }
 
 #[cfg(test)]

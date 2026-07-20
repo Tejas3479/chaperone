@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package chaperone.protocol;
+
+message HandshakeInit {
+    bytes identity_key = 1;       // 32 bytes X25519 public
+    bytes signed_prekey = 2;      // 32 bytes X25519 public
+    bytes signed_prekey_sig = 3;  // 64 bytes Ed25519 signature
+    bytes ephemeral_key = 4;      // 32 bytes X25519 public
+}
+
+message HandshakeResponse {
+    bytes ephemeral_key = 1;      // 32 bytes X25519 public
+}
