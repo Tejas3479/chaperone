@@ -55,13 +55,15 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         uses: dtolnay/rust-toolchain@nightly
 
+      - name: Install cargo-binstall (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        uses: cargo-bins/cargo-binstall@main
+
       - name: Install cargo-fuzz (Linux only)
         if: matrix.os == 'ubuntu-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install.sh | sh
-          cargo binstall -y cargo-fuzz
+        run: cargo binstall -y cargo-fuzz
 
       - name: Run fuzz smoke test (Linux only)
         if: matrix.os == 'ubuntu-latest'
