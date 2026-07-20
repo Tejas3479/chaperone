@@ -1,5 +1,6 @@
 use bs58;
 use ed25519_dalek::SigningKey;
+use ml_kem::kem::Kem;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,7 +10,6 @@ use std::fmt;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use x25519_dalek::StaticSecret;
-use ml_kem::kem::Kem;
 
 #[derive(Debug, Clone)]
 pub enum IdentityError {
@@ -395,9 +395,12 @@ impl LocalIdentity {
 
     /// Generates a new signed prekey (both X25519 and ML-KEM-768), signs them with the signing key, and stores their private keys in the keychain.
     /// Returns `(signed_prekey_pub, signature, pq_prekey_pub)`.
-    pub fn generate_and_save_signed_prekey(&self) -> Result<([u8; 32], [u8; 64], [u8; 1184]), IdentityError> {
+    #[allow(clippy::type_complexity)]
+    pub fn generate_and_save_signed_prekey(
+        &self,
+    ) -> Result<([u8; 32], [u8; 64], [u8; 1184]), IdentityError> {
         use ed25519_dalek::Signer;
-        use ml_kem::{MlKem768, KeyExport};
+        use ml_kem::{KeyExport, MlKem768};
 
         let signing_key = self.load_signing_key()?;
 
@@ -455,7 +458,9 @@ impl LocalIdentity {
     }
 
     /// Loads the private signed PQ prekey from the keychain.
-    pub fn load_signed_prekey_pq(&self) -> Result<ml_kem::kem::DecapsulationKey<ml_kem::MlKem768>, IdentityError> {
+    pub fn load_signed_prekey_pq(
+        &self,
+    ) -> Result<ml_kem::kem::DecapsulationKey<ml_kem::MlKem768>, IdentityError> {
         use ml_kem::KeyInit;
         let keychain = get_keychain();
         let prekey_b58 = keychain.get_password("chaperone-signed-prekey-pq", "default")?;
@@ -469,7 +474,9 @@ impl LocalIdentity {
         }
         let mut seed = [0u8; 64];
         seed.copy_from_slice(&prekey_bytes);
-        Ok(ml_kem::kem::DecapsulationKey::<ml_kem::MlKem768>::new(seed.as_slice().try_into().unwrap()))
+        Ok(ml_kem::kem::DecapsulationKey::<ml_kem::MlKem768>::new(
+            seed.as_slice().try_into().unwrap(),
+        ))
     }
 
     /// Returns the public X25519 agreement key associated with this identity.

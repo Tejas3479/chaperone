@@ -7,11 +7,11 @@ use std::error::Error;
 use std::fmt;
 use x25519_dalek::{PublicKey, StaticSecret};
 
+use ml_kem::kem::EncapsulationKey;
 use ml_kem::{
     kem::{Decapsulate, Encapsulate, KeyExport},
-    FromSeed, MlKem768,
+    MlKem768,
 };
-use ml_kem::kem::EncapsulationKey;
 
 pub type SessionKey = [u8; 32];
 
@@ -183,9 +183,9 @@ pub fn initiate(
     if pq_negotiated {
         if let Some(ref_pub_key_bytes) = remote_pq_prekey {
             // Load remote public key
-            if let Ok(ek) = EncapsulationKey::<MlKem768>::new(
-                ref_pub_key_bytes.as_slice().try_into().unwrap(),
-            ) {
+            if let Ok(ek) =
+                EncapsulationKey::<MlKem768>::new(ref_pub_key_bytes.as_slice().try_into().unwrap())
+            {
                 let (ct, shared_secret) = ek.encapsulate();
                 pq_kem_ciphertext = Some(ct.to_vec());
                 ikm.extend_from_slice(shared_secret.as_slice());
@@ -270,10 +270,8 @@ pub fn respond(
 
     // Negotiate PQ
     let alice_supports_pq = init.capabilities.iter().any(|c| c == "PQ_MLKEM_768");
-    let pq_negotiated = local_supports_pq
-        && bob_has_pq
-        && alice_supports_pq
-        && init.pq_kem_ciphertext.is_some();
+    let pq_negotiated =
+        local_supports_pq && bob_has_pq && alice_supports_pq && init.pq_kem_ciphertext.is_some();
 
     let mut ikm = Vec::new();
     ikm.extend_from_slice(dh1.as_bytes());
@@ -370,6 +368,7 @@ pub fn finalize_initiator(
 mod tests {
     use super::*;
     use crate::identity::get_keychain;
+    use ml_kem::FromSeed;
     use std::collections::HashMap;
 
     fn backup_keychain() -> HashMap<String, String> {
@@ -401,8 +400,8 @@ mod tests {
     fn test_mlkem_kat_vectors() {
         // 1. Setup seed (0..64)
         let mut seed = [0u8; 64];
-        for i in 0..64 {
-            seed[i] = i as u8;
+        for (i, val) in seed.iter_mut().enumerate() {
+            *val = i as u8;
         }
 
         // Generate keys
@@ -422,12 +421,12 @@ mod tests {
 
         // 2. Perform deterministic encapsulation with m = 100..132
         let mut m = [0u8; 32];
-        for i in 0..32 {
-            m[i] = (i + 100) as u8;
+        for (i, val) in m.iter_mut().enumerate() {
+            *val = (i + 100) as u8;
         }
 
-        let (ct, shared_secret_sender) = ek
-            .encapsulate_deterministic(m.as_slice().try_into().unwrap());
+        let (ct, shared_secret_sender) =
+            ek.encapsulate_deterministic(m.as_slice().try_into().unwrap());
 
         // Verify generated ciphertext and shared secret
         assert_eq!(
@@ -437,8 +436,8 @@ mod tests {
         assert_eq!(
             shared_secret_sender.as_slice(),
             &[
-                197, 167, 65, 16, 193, 88, 172, 186, 249, 192, 29, 235, 134, 250, 108, 193, 12,
-                20, 83, 63, 237, 165, 75, 236, 31, 221, 0, 13, 97, 240, 126, 78
+                197, 167, 65, 16, 193, 88, 172, 186, 249, 192, 29, 235, 134, 250, 108, 193, 12, 20,
+                83, 63, 237, 165, 75, 236, 31, 221, 0, 13, 97, 240, 126, 78
             ]
         );
 
@@ -499,7 +498,7 @@ mod tests {
             &alice_provisional,
             &response,
             dh1.as_bytes(),
-            &[0u8; 32], // dummy EK_A / IK_B DH
+            &[0u8; 32],     // dummy EK_A / IK_B DH
             dh1.as_bytes(), // dummy EK_A / SPK_B DH
         )
         .unwrap();
