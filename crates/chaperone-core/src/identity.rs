@@ -9,6 +9,7 @@ use std::fmt;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use x25519_dalek::StaticSecret;
+use ml_kem::kem::Kem;
 
 #[derive(Debug, Clone)]
 pub enum IdentityError {
@@ -392,32 +393,48 @@ impl LocalIdentity {
         Ok(StaticSecret::from(agreement_priv_bytes))
     }
 
-    /// Generates a new signed prekey, signs it with the signing key, and stores its private key in the keychain.
-    /// Returns `(signed_prekey_pub, signature)`.
-    pub fn generate_and_save_signed_prekey(&self) -> Result<([u8; 32], [u8; 64]), IdentityError> {
+    /// Generates a new signed prekey (both X25519 and ML-KEM-768), signs them with the signing key, and stores their private keys in the keychain.
+    /// Returns `(signed_prekey_pub, signature, pq_prekey_pub)`.
+    pub fn generate_and_save_signed_prekey(&self) -> Result<([u8; 32], [u8; 64], [u8; 1184]), IdentityError> {
         use ed25519_dalek::Signer;
+        use ml_kem::{MlKem768, KeyExport};
 
         let signing_key = self.load_signing_key()?;
 
-        // Generate static secret
+        // Generate static secret for X25519
         let mut entropy = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut entropy);
         let prekey_secret = StaticSecret::from(entropy);
         let prekey_pub = x25519_dalek::PublicKey::from(&prekey_secret);
         let prekey_pub_bytes = prekey_pub.to_bytes();
 
-        // Sign prekey
-        let signature = signing_key.sign(&prekey_pub_bytes);
+        // Generate ML-KEM-768 keypair
+        let (dk, ek) = MlKem768::generate_keypair();
+        let ek_bytes = ek.to_bytes();
+        let dk_bytes = dk.to_bytes();
+
+        // Sign classical prekey public key AND PQ prekey public key concatenated
+        let mut signed_data = Vec::new();
+        signed_data.extend_from_slice(&prekey_pub_bytes);
+        signed_data.extend_from_slice(ek_bytes.as_slice());
+
+        let signature = signing_key.sign(&signed_data);
         let signature_bytes = signature.to_bytes();
 
-        // Store prekey private key in keychain
+        // Store prekey private keys in keychain
         let prekey_priv_bytes = prekey_secret.to_bytes();
         let prekey_b58 = bs58::encode(prekey_priv_bytes).into_string();
 
+        let dk_b58 = bs58::encode(dk_bytes).into_string();
+
         let keychain = get_keychain();
         keychain.set_password("chaperone-signed-prekey", "default", &prekey_b58)?;
+        keychain.set_password("chaperone-signed-prekey-pq", "default", &dk_b58)?;
 
-        Ok((prekey_pub_bytes, signature_bytes))
+        let mut pq_pub_bytes = [0u8; 1184];
+        pq_pub_bytes.copy_from_slice(ek_bytes.as_slice());
+
+        Ok((prekey_pub_bytes, signature_bytes, pq_pub_bytes))
     }
 
     /// Loads the private signed prekey X25519 key from the keychain.
@@ -435,6 +452,24 @@ impl LocalIdentity {
         let mut prekey_priv_bytes = [0u8; 32];
         prekey_priv_bytes.copy_from_slice(&prekey_bytes);
         Ok(StaticSecret::from(prekey_priv_bytes))
+    }
+
+    /// Loads the private signed PQ prekey from the keychain.
+    pub fn load_signed_prekey_pq(&self) -> Result<ml_kem::kem::DecapsulationKey<ml_kem::MlKem768>, IdentityError> {
+        use ml_kem::KeyInit;
+        let keychain = get_keychain();
+        let prekey_b58 = keychain.get_password("chaperone-signed-prekey-pq", "default")?;
+        let prekey_bytes = bs58::decode(prekey_b58)
+            .into_vec()
+            .map_err(|e| IdentityError::CorruptExistingIdentity(e.to_string()))?;
+        if prekey_bytes.len() != 64 {
+            return Err(IdentityError::CorruptExistingIdentity(
+                "Invalid signed PQ prekey length".into(),
+            ));
+        }
+        let mut seed = [0u8; 64];
+        seed.copy_from_slice(&prekey_bytes);
+        Ok(ml_kem::kem::DecapsulationKey::<ml_kem::MlKem768>::new(seed.as_slice().try_into().unwrap()))
     }
 
     /// Returns the public X25519 agreement key associated with this identity.

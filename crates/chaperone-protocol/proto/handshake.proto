@@ -7,8 +7,12 @@ message HandshakeInit {
     bytes signed_prekey = 2;      // 32 bytes X25519 public
     bytes signed_prekey_sig = 3;  // 64 bytes Ed25519 signature
     bytes ephemeral_key = 4;      // 32 bytes X25519 public
+    optional bytes pq_kem_ciphertext = 5;
+    repeated string capabilities = 6;
 }
 
 message HandshakeResponse {
     bytes ephemeral_key = 1;      // 32 bytes X25519 public
+    optional bytes pq_kem_ciphertext_ack = 2;
+    repeated string capabilities = 3;
 }
