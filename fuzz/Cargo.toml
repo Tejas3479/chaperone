@@ -15,3 +15,9 @@ name = "vault_nonce_reuse"
 path = "fuzz_targets/vault_nonce_reuse.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "handshake_downgrade"
+path = "fuzz_targets/handshake_downgrade.rs"
+test = false
+doc = false

@@ -270,8 +270,13 @@ pub fn respond(
 
     // Negotiate PQ
     let alice_supports_pq = init.capabilities.iter().any(|c| c == "PQ_MLKEM_768");
-    let pq_negotiated =
-        local_supports_pq && bob_has_pq && alice_supports_pq && init.pq_kem_ciphertext.is_some();
+    let pq_negotiated = local_supports_pq
+        && bob_has_pq
+        && alice_supports_pq
+        && init
+            .pq_kem_ciphertext
+            .as_ref()
+            .is_some_and(|c| c.len() == 1088);
 
     let mut ikm = Vec::new();
     ikm.extend_from_slice(dh1.as_bytes());
@@ -324,6 +329,7 @@ pub fn respond(
 
 /// Finalizes the handshake on the initiator's (Alice's) side.
 /// Detects downgrade attacks and derives the downgraded key if Bob did not support PQ.
+#[allow(clippy::too_many_arguments)]
 pub fn finalize_initiator(
     alice_supports_pq: bool,
     remote_pq_prekey: Option<[u8; 1184]>,
@@ -332,9 +338,12 @@ pub fn finalize_initiator(
     dh1: &[u8],
     dh2: &[u8],
     dh3: &[u8],
+    pq_kem_ciphertext: Option<&[u8]>,
 ) -> Result<Session, HandshakeError> {
     let bob_supports_pq = response.capabilities.iter().any(|c| c == "PQ_MLKEM_768");
-    let pq_negotiated = alice_supports_pq && remote_pq_prekey.is_some() && bob_supports_pq;
+    let has_ack = response.pq_kem_ciphertext_ack.is_some();
+    let pq_negotiated =
+        alice_supports_pq && remote_pq_prekey.is_some() && bob_supports_pq && has_ack;
 
     if provisional_session.is_classical_only && pq_negotiated {
         return Err(HandshakeError::Other(
@@ -343,8 +352,26 @@ pub fn finalize_initiator(
         ));
     }
 
+    if pq_negotiated {
+        // Verify ciphertext ACK
+        if let Some(sent_ct) = pq_kem_ciphertext {
+            if let Some(ref ack) = response.pq_kem_ciphertext_ack {
+                let mut hasher = Sha256::new();
+                hasher.update(sent_ct);
+                let expected_ack = hasher.finalize().to_vec();
+                if ack != &expected_ack {
+                    return Err(HandshakeError::Other(
+                        "KEM ciphertext acknowledgment mismatch (possible tampering detected)"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
     if !provisional_session.is_classical_only && !pq_negotiated {
-        // Bob downgraded/does not support PQ. Alice must downgrade to classical key!
+        // Bob downgraded/does not support PQ or didn't receive/acknowledge KEM ciphertext.
+        // Alice must downgrade to classical key!
         let mut ikm = Vec::new();
         ikm.extend_from_slice(dh1);
         ikm.extend_from_slice(dh2);
@@ -500,6 +527,7 @@ mod tests {
             dh1.as_bytes(),
             &[0u8; 32],     // dummy EK_A / IK_B DH
             dh1.as_bytes(), // dummy EK_A / SPK_B DH
+            init.pq_kem_ciphertext.as_deref(),
         )
         .unwrap();
 
@@ -559,6 +587,7 @@ mod tests {
             dh_dummy.as_slice(),
             dh_dummy.as_slice(),
             dh_dummy.as_slice(),
+            init.pq_kem_ciphertext.as_deref(),
         )
         .unwrap();
 
@@ -727,5 +756,155 @@ mod tests {
         let decoded_res: HandshakeResponse = decoded_proto_res.try_into().unwrap();
 
         assert_eq!(original_response, decoded_res);
+    }
+
+    #[test]
+    fn test_handshake_downgrade_fuzz_simulation() {
+        // Setup Bob (PQ Capable)
+        get_keychain().reset();
+        let bob_seed = [2u8; 32];
+        let bob_identity = LocalIdentity::bootstrap_with_seed(bob_seed).unwrap();
+        let (bob_prekey_pub, bob_prekey_sig, bob_pq_pub) =
+            bob_identity.generate_and_save_signed_prekey().unwrap();
+        let bob_identity_pub = bob_identity.public_agreement_key().unwrap();
+
+        let bob_backup = backup_keychain();
+
+        // Setup Alice (PQ Capable)
+        get_keychain().reset();
+        let alice_seed = [1u8; 32];
+        let alice_identity = LocalIdentity::bootstrap_with_seed(alice_seed).unwrap();
+        let (mut base_init, alice_provisional_session) = initiate(
+            &alice_identity,
+            bob_identity_pub,
+            bob_prekey_pub,
+            Some(bob_pq_pub),
+            true, // Alice supports PQ
+        );
+        base_init.signed_prekey_sig = bob_prekey_sig;
+
+        // Run simulation for each strategy with various payloads
+        let test_payloads: &[&[u8]] = &[
+            &[],
+            &[1, 2, 3],
+            &[0xff; 32],
+            b"arbitrary_string,another_one",
+        ];
+
+        for strategy in 0..8 {
+            for payload in test_payloads {
+                let mut mutated_init = base_init.clone();
+                let mut is_mutated = true;
+
+                match strategy {
+                    0 => {
+                        mutated_init.capabilities.retain(|c| c != "PQ_MLKEM_768");
+                    }
+                    1 => {
+                        mutated_init.pq_kem_ciphertext = None;
+                    }
+                    2 => {
+                        mutated_init.capabilities.retain(|c| c != "PQ_MLKEM_768");
+                        mutated_init.pq_kem_ciphertext = None;
+                    }
+                    3 => {
+                        mutated_init.capabilities.clear();
+                        if !payload.is_empty() {
+                            if let Ok(s) = std::str::from_utf8(payload) {
+                                for chunk in s.split(',') {
+                                    mutated_init.capabilities.push(chunk.to_string());
+                                }
+                            }
+                        }
+                    }
+                    4 => {
+                        if let Some(ref mut ct) = mutated_init.pq_kem_ciphertext {
+                            if !payload.is_empty() {
+                                for (i, &byte) in payload.iter().enumerate() {
+                                    let idx = i % ct.len();
+                                    ct[idx] ^= byte;
+                                }
+                            } else {
+                                is_mutated = false;
+                            }
+                        }
+                    }
+                    5 => {
+                        mutated_init.pq_kem_ciphertext = Some(payload.to_vec());
+                    }
+                    6 => {
+                        mutated_init.capabilities.clear();
+                        if let Some(ref mut ct) = mutated_init.pq_kem_ciphertext {
+                            if !payload.is_empty() {
+                                ct.copy_from_slice(&[0u8; 1088]);
+                            }
+                        }
+                    }
+                    7 => {
+                        mutated_init.capabilities = vec!["PQ_MLKEM_768".to_string()];
+                        if let Some(ref mut ct) = mutated_init.pq_kem_ciphertext {
+                            if !payload.is_empty() {
+                                let idx = (payload[0] as usize) % ct.len();
+                                ct[idx] ^= 0x55;
+                            } else {
+                                mutated_init.pq_kem_ciphertext = None;
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+
+                let is_pq_stripped = !mutated_init
+                    .capabilities
+                    .contains(&"PQ_MLKEM_768".to_string())
+                    || mutated_init
+                        .pq_kem_ciphertext
+                        .as_ref()
+                        .is_none_or(|c| c.is_empty());
+
+                restore_keychain(&bob_backup);
+                match respond(&bob_identity, &mutated_init, true) {
+                    Ok((response, bob_session)) => {
+                        if is_pq_stripped {
+                            assert!(
+                                bob_session.is_classical_only,
+                                "Bob negotiated PQ-hybrid despite stripped PQ leg! Capabilities: {:?}, CT: {:?}",
+                                mutated_init.capabilities,
+                                mutated_init.pq_kem_ciphertext
+                            );
+                        }
+
+                        let dh_dummy = [0u8; 32];
+                        let alice_final_res = finalize_initiator(
+                            true,
+                            Some(bob_pq_pub),
+                            &alice_provisional_session,
+                            &response,
+                            &dh_dummy,
+                            &dh_dummy,
+                            &dh_dummy,
+                            mutated_init.pq_kem_ciphertext.as_deref(),
+                        );
+
+                        if let Ok(alice_session) = alice_final_res {
+                            assert_eq!(
+                                bob_session.is_classical_only, alice_session.is_classical_only,
+                                "Alice and Bob mismatched on classical/hybrid status!"
+                            );
+
+                            if !bob_session.is_classical_only && is_mutated {
+                                assert_ne!(
+                                    bob_session.key, alice_session.key,
+                                    "Key agreement succeeded with mutated/forged KEM ciphertext!"
+                                );
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Safe rejection
+                    }
+                }
+            }
+        }
     }
 }

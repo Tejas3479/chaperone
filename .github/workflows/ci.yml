@@ -51,3 +51,17 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: cargo check --manifest-path fuzz/Cargo.toml
 
+      - name: Install nightly Rust toolchain (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install cargo-fuzz (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install.sh | sh
+          cargo binstall -y cargo-fuzz
+
+      - name: Run fuzz smoke test (Linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo +nightly fuzz run handshake_downgrade -- -max_total_time=60
+
