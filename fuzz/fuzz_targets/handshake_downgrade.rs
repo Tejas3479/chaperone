@@ -63,7 +63,7 @@ fuzz_target!(|data: &[u8]| {
     let strategy = data[0] % 8;
     let payload = &data[1..];
 
-    let mut is_mutated = true;
+
 
     match strategy {
         0 => {
@@ -98,9 +98,7 @@ fuzz_target!(|data: &[u8]| {
                         let idx = i % ct.len();
                         ct[idx] ^= byte;
                     }
-                } else {
-                    is_mutated = false;
-                }
+
             }
         }
         5 => {
@@ -130,6 +128,9 @@ fuzz_target!(|data: &[u8]| {
         }
         _ => unreachable!(),
     }
+
+    let is_mutated = mutated_init.capabilities != base_init.capabilities
+        || mutated_init.pq_kem_ciphertext != base_init.pq_kem_ciphertext;
 
     let is_pq_stripped = !mutated_init.capabilities.contains(&"PQ_MLKEM_768".to_string())
         || mutated_init.pq_kem_ciphertext.is_none()
