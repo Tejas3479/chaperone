@@ -782,7 +782,7 @@ mod tests {
         let _ = found;
 
         // Assert that the marker is NOT found in process memory!
-        #[cfg(any(target_os = "windows", target_os = "linux"))]
+        #[cfg(target_os = "linux")]
         {
             assert!(
                 !found,

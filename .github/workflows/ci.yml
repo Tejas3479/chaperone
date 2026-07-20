@@ -57,6 +57,8 @@ jobs:
 
       - name: Install cargo-fuzz (Linux only)
         if: matrix.os == 'ubuntu-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install.sh | sh
           cargo binstall -y cargo-fuzz
