@@ -14,6 +14,8 @@ fuzz_target!(|data: &[u8]| {
 
     let (bob_identity, base_init, alice_provisional_session, bob_pq_pub) =
         HARNESS_SETUP.get_or_init(|| {
+            // Force dynamic keychain backend to use MockKeychainBackend
+            std::env::set_var("CHAPERONE_MOCK_KEYCHAIN", "1");
             // Setup Bob (PQ Capable)
             chaperone_core::identity::get_keychain().reset();
             let bob_identity = LocalIdentity::bootstrap_with_seed([2u8; 32]).unwrap();
